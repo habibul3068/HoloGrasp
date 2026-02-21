@@ -2,17 +2,24 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>HoloGrasp | V6</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>HoloGrasp | V6 (Touch & Desktop Edition)</title>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #050505; font-family: 'Segoe UI', sans-serif; }
+        body { 
+            margin: 0; 
+            overflow: hidden; 
+            background-color: #050505; 
+            font-family: 'Segoe UI', sans-serif; 
+            cursor: crosshair; 
+            touch-action: none; /* Prevents mobile scrolling when swiping particles */
+            user-select: none; /* Prevents text highlighting on double tap */
+        }
         canvas { display: block; }
-        #video-input { display: none; transform: scaleX(-1); }
         #ui {
             position: absolute;
             top: 20px;
             left: 20px;
             color: #00ffcc;
-            pointer-events: none;
             background: rgba(0, 0, 0, 0.6);
             padding: 20px;
             border-radius: 12px;
@@ -20,15 +27,33 @@
             backdrop-filter: blur(5px);
             min-width: 250px;
             box-shadow: 0 0 15px rgba(0, 255, 204, 0.1);
+            pointer-events: auto; /* Allows tapping the menu */
         }
         h1 { margin: 0 0 15px 0; font-size: 1.1rem; text-transform: uppercase; letter-spacing: 2px; border-bottom: 1px solid #444; padding-bottom: 10px; }
-        .control-row { display: flex; align-items: center; margin-bottom: 8px; font-size: 0.9rem; color: #ddd; }
+        
+        /* Interactive Control Rows */
+        .control-row { 
+            display: flex; 
+            align-items: center; 
+            margin-bottom: 8px; 
+            font-size: 0.9rem; 
+            color: #ddd; 
+            cursor: pointer;
+            padding: 8px;
+            border-radius: 6px;
+            transition: background 0.2s;
+        }
+        .control-row:hover, .control-row:active {
+            background: rgba(0, 255, 204, 0.2);
+        }
+        .control-row.info-only { cursor: default; }
+        .control-row.info-only:hover { background: transparent; }
+
         .icon { width: 25px; text-align: center; margin-right: 10px; font-size: 1.2rem; }
         .status-label { color: #888; font-size: 0.8rem; margin-top: 15px; text-transform: uppercase; letter-spacing: 1px; }
         .highlight { color: #fff; font-weight: bold; font-size: 1.1rem; text-shadow: 0 0 10px rgba(255,255,255,0.5); }
         #gesture-indicator { color: #ffeb3b; transition: all 0.2s; }
         
-        /* CREDITS SECTION */
         .credits {
             margin-top: 20px;
             padding-top: 10px;
@@ -42,32 +67,26 @@
     </style>
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
 </head>
 <body>
 
 <div id="ui">
     <h1>System Controls</h1>
-    <div class="control-row"><div class="icon">👌</div><div><b>Pinch:</b> Next Shape</div></div>
-    <div class="control-row"><div class="icon">✌️</div><div><b>Peace Sign:</b> Next Color</div></div>
-    <div class="control-row"><div class="icon">✊</div><div><b>Fist:</b> Black Hole (Implode)</div></div>
-    <div class="control-row"><div class="icon">🖐</div><div><b>Open Hand:</b> Swirl / Repel</div></div>
+    <div class="control-row" id="btn-shape"><div class="icon">🔄</div><div><b>Tap / Space:</b> Next Shape</div></div>
+    <div class="control-row" id="btn-color"><div class="icon">🎨</div><div><b>Tap / 'C':</b> Next Color</div></div>
+    <div class="control-row info-only"><div class="icon">👆</div><div><b>Hold / Click:</b> Black Hole</div></div>
+    <div class="control-row info-only"><div class="icon">🖐️</div><div><b>Swipe / Move:</b> Swirl / Repel</div></div>
     
     <div class="status-label">Current State</div>
     <div>Shape: <span id="shape-name" class="highlight">Sphere</span></div>
     <div>Theme: <span id="theme-name" class="highlight">Neon</span></div>
-    <div style="margin-top: 10px;">Detected: <span id="gesture-indicator">Searching...</span></div>
+    <div style="margin-top: 10px;">Detected: <span id="gesture-indicator">Waiting...</span></div>
 
     <div class="credits">
         Developed by <b>Md Habibul Goni</b><br>
         All rights reserved to Aupu
     </div>
 </div>
-
-<video id="video-input"></video>
 
 <script>
     // --- CONFIGURATION ---
@@ -82,10 +101,10 @@
     const colorThemes = ["Neon", "Fire", "Ice", "Matrix"];
     
     let gestureCooldown = false;
+    let handState = { active: false, x: 0, y: 0, isFist: false };
 
     // Three.js Setup
     const scene = new THREE.Scene();
-    // Add subtle fog for depth, black color
     scene.fog = new THREE.FogExp2(0x000000, 0.0015);
 
     const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
@@ -93,8 +112,7 @@
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(window.devicePixelRatio);
-    // Set clear color to black for space background
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Capped for mobile performance
     renderer.setClearColor(0x000000, 1);
     document.body.appendChild(renderer.domElement);
 
@@ -165,10 +183,7 @@
         document.getElementById('shape-name').innerText = type;
         const scale = 1.8;
 
-        // --- NEW: FORCE ROTATION RESET FOR TEXT ---
         if (type === "Truth") {
-            // Reset to front view immediately
-            // We set Y to -0.3 so it starts slightly left and rotates into perfect center view
             particles.rotation.y = -0.3; 
             particles.rotation.x = 0;
             particles.rotation.z = 0;
@@ -187,7 +202,6 @@
             } 
             else if (type === "Heart") {
                 const t = Math.random() * Math.PI * 2;
-                const r = Math.random(); 
                 let hx = 16 * Math.pow(Math.sin(t), 3);
                 let hy = 13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t);
                 x = hx * scale; y = hy * scale; z = (Math.random() - 0.5) * 10;
@@ -227,18 +241,17 @@
                  x = (R + tube * Math.cos(v)) * Math.cos(u); y = (R + tube * Math.cos(v)) * Math.sin(u); z = tube * Math.sin(v);
             }
             else if (type === "Truth") { 
-                // "I ❤️ U LED" Logic
                 const ratio = i / PARTICLE_COUNT;
-                if (ratio < 0.16) { // I
+                if (ratio < 0.16) { 
                     const centerI = -70; x = centerI + (Math.random() - 0.5) * 5; y = (Math.random() - 0.5) * 40; z = (Math.random() - 0.5) * 5;
                     if (Math.random() > 0.85) { x = centerI + (Math.random() - 0.5) * 15; y = (Math.random() > 0.5 ? 20 : -20) + (Math.random()-0.5)*2; }
                 } 
-                else if (ratio < 0.33) { // Heart
+                else if (ratio < 0.33) { 
                     const t = Math.random() * Math.PI * 2; const s = 0.8; 
                     let hx = 16 * Math.pow(Math.sin(t), 3); let hy = 13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t);
                     x = -45 + hx * s; y = 5 + hy * s; z = (Math.random() - 0.5) * 8;
                 } 
-                else if (ratio < 0.50) { // U
+                else if (ratio < 0.50) { 
                     const centerU = -10; const rU = 9; const yBase = -11; const topU = 20;   
                     const part = Math.random();
                     if (part < 0.35) { x = (centerU - rU) + (Math.random()-0.5)*3; y = yBase + Math.random() * (topU - yBase); } 
@@ -246,19 +259,19 @@
                     else { const theta = Math.PI + Math.random() * Math.PI; x = centerU + rU * Math.cos(theta); y = yBase + rU * Math.sin(theta); x += (Math.random()-0.5)*3; y += (Math.random()-0.5)*3; }
                     z = (Math.random()-0.5)*5;
                 }
-                else if (ratio < 0.66) { // L
+                else if (ratio < 0.66) { 
                     const centerL = 20;
                     if (Math.random() < 0.6) { x = (centerL - 8) + (Math.random()-0.5)*3; y = (Math.random() - 0.5) * 40; } 
                     else { x = (centerL) + (Math.random()-0.5) * 16; y = -20 + (Math.random()-0.5)*3; }
                     z = (Math.random()-0.5)*5;
                 }
-                else if (ratio < 0.83) { // E
+                else if (ratio < 0.83) { 
                     const centerE = 45;
                     if (Math.random() < 0.4) { x = (centerE - 8) + (Math.random()-0.5)*3; y = (Math.random() - 0.5) * 40; } 
                     else { const bar = Math.floor(Math.random() * 3); let yPos = 0; if(bar === 0) yPos = 20; if(bar === 1) yPos = 0; if(bar === 2) yPos = -20; x = centerE + (Math.random()-0.5)*16; y = yPos + (Math.random()-0.5)*3; }
                     z = (Math.random()-0.5)*5;
                 }
-                else { // D
+                else { 
                     const centerD = 70;
                     if (Math.random() < 0.4) { x = (centerD - 8) + (Math.random()-0.5)*3; y = (Math.random() - 0.5) * 40; } 
                     else { const theta = -Math.PI/2 + Math.random() * Math.PI; x = (centerD - 8) + 15 * Math.cos(theta); y = 15 * Math.sin(theta) * 1.3; x += (Math.random()-0.5)*4; y += (Math.random()-0.5)*4; }
@@ -276,60 +289,95 @@
     calculateShape(shapeNames[0]);
     applyColorTheme(colorThemes[0]);
 
-    // --- MEDIA PIPE & GESTURE LOGIC ---
-    let handState = { active: false, x: 0, y: 0, isFist: false };
-    const videoElement = document.getElementById('video-input');
-    const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
-    hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
+    // --- INTERACTION LOGIC (Mouse, Touch, UI) ---
+    const uiText = document.getElementById('gesture-indicator');
 
-    function distance(p1, p2) { return Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2)); }
+    function triggerCooldown() { gestureCooldown = true; setTimeout(() => { gestureCooldown = false; }, 300); }
 
-    hands.onResults((results) => {
-        const lm = results.multiHandLandmarks;
-        const uiText = document.getElementById('gesture-indicator');
-        if (lm && lm.length > 0) {
-            const l = lm[0];
-            handState.active = true;
-            handState.x = (0.5 - l[9].x) * 100;
-            handState.y = (0.5 - l[9].y) * 60;
+    function nextShape() {
+        if (!gestureCooldown) {
+            currentShapeIndex = (currentShapeIndex + 1) % shapeNames.length;
+            calculateShape(shapeNames[currentShapeIndex]);
+            uiText.innerText = "🔄 Shape Changed";
+            triggerCooldown();
+        }
+    }
 
-            const dPinch = distance(l[8], l[4]);
-            const dFist = (distance(l[8], l[0]) + distance(l[12], l[0]) + distance(l[16], l[0]) + distance(l[20], l[0])) / 4;
-            const isPeace = (distance(l[8], l[0]) > 0.3 && distance(l[12], l[0]) > 0.3 && distance(l[16], l[0]) < 0.25 && distance(l[20], l[0]) < 0.25);
+    function nextColor() {
+        if (!gestureCooldown) {
+            currentColorIndex = (currentColorIndex + 1) % colorThemes.length;
+            applyColorTheme(colorThemes[currentColorIndex]);
+            uiText.innerText = "🎨 Color Changed";
+            triggerCooldown();
+        }
+    }
 
-            if (dFist < 0.25) {
-                handState.isFist = true;
-                uiText.innerText = "✊ Fist (Black Hole)";
-            } else {
-                handState.isFist = false;
-                if (isPeace && !handState.isFist) {
-                    uiText.innerText = "✌️ Peace (Color)";
-                    if (!gestureCooldown) {
-                        currentColorIndex = (currentColorIndex + 1) % colorThemes.length;
-                        applyColorTheme(colorThemes[currentColorIndex]);
-                        triggerCooldown();
-                    }
-                } else if (dPinch < 0.05) {
-                    uiText.innerText = "👌 Pinch (Shape)";
-                    if (!gestureCooldown) {
-                        currentShapeIndex = (currentShapeIndex + 1) % shapeNames.length;
-                        calculateShape(shapeNames[currentShapeIndex]);
-                        triggerCooldown();
-                    }
-                } else {
-                    uiText.innerText = "🖐 Open Hand (Hover)";
-                }
-            }
-        } else {
-            handState.active = false;
-            uiText.innerText = "No Hand Detected";
+    // UI Click Events
+    document.getElementById('btn-shape').addEventListener('click', nextShape);
+    document.getElementById('btn-color').addEventListener('click', nextColor);
+
+    // Keyboard bindings
+    window.addEventListener('keydown', (event) => {
+        if (event.code === 'Space') nextShape();
+        if (event.code === 'KeyC') nextColor();
+    });
+
+    // Calculate vertical visible area height for accurate cursor mapping
+    const vFOV = THREE.MathUtils.degToRad(camera.fov);
+    const visibleHeight = 2 * Math.tan(vFOV / 2) * camera.position.z;
+    
+    function updateInteractionCoords(clientX, clientY) {
+        handState.active = true;
+        const visibleWidth = visibleHeight * camera.aspect;
+        handState.x = ((clientX / window.innerWidth) - 0.5) * visibleWidth;
+        handState.y = (0.5 - (clientY / window.innerHeight)) * visibleHeight;
+    }
+
+    // -- Desktop Mouse Events --
+    window.addEventListener('mousemove', (event) => {
+        updateInteractionCoords(event.clientX, event.clientY);
+        if (!handState.isFist) uiText.innerText = "🖱️ Interacting...";
+    });
+
+    window.addEventListener('mousedown', (event) => {
+        // Only trigger black hole if clicking outside the UI menu
+        if (event.target.closest('#ui')) return; 
+        if (event.button === 0) {
+            handState.isFist = true;
+            uiText.innerText = "🌌 Black Hole Active!";
         }
     });
 
-    function triggerCooldown() { gestureCooldown = true; setTimeout(() => { gestureCooldown = false; }, 800); }
+    window.addEventListener('mouseup', () => { handState.isFist = false; });
+    window.addEventListener('mouseleave', () => { handState.active = false; uiText.innerText = "Waiting..."; });
 
-    const cameraUtils = new Camera(videoElement, { onFrame: async () => { await hands.send({image: videoElement}); }, width: 640, height: 480 });
-    cameraUtils.start();
+    // -- Mobile Touch Events --
+    window.addEventListener('touchstart', (event) => {
+        if (event.target.closest('#ui')) return; // Ignore if tapping menu
+        if (event.touches.length > 0) {
+            updateInteractionCoords(event.touches[0].clientX, event.touches[0].clientY);
+            handState.isFist = true; // Tap and hold acts like left click
+            uiText.innerText = "🌌 Black Hole Active!";
+        }
+    }, { passive: false });
+
+    window.addEventListener('touchmove', (event) => {
+        if (event.target.closest('#ui')) return; 
+        event.preventDefault(); // Prevents screen from pulling down/refreshing on mobile
+        if (event.touches.length > 0) {
+            updateInteractionCoords(event.touches[0].clientX, event.touches[0].clientY);
+        }
+    }, { passive: false });
+
+    window.addEventListener('touchend', () => {
+        handState.isFist = false;
+        handState.active = false;
+        uiText.innerText = "Waiting...";
+    });
+    window.addEventListener('touchcancel', () => {
+        handState.isFist = false;
+        handState.active = false;
+    });
 
     // --- ANIMATION LOOP ---
     const clock = new THREE.Clock();
@@ -345,7 +393,7 @@
             const tx = targetPositions[idx], ty = targetPositions[idx+1], tz = targetPositions[idx+2];
 
             if (handState.isFist && handState.active) {
-                // BLACK HOLE (SATURN SWIRL)
+                // BLACK HOLE (Implode/Swirl)
                 const dx = px - handState.x;
                 const dy = py - handState.y;
                 let angle = Math.atan2(dy, dx);
@@ -363,7 +411,7 @@
                 cArr[idx] = 1.0; cArr[idx+1] = 1.0 * (1.0 - heat); cArr[idx+2] = 1.0 * (1.0 - heat); 
 
             } else {
-                // NORMAL SHAPE
+                // NORMAL SHAPE & HOVER (Repel)
                 pArr[idx] += (tx - px) * 2.5 * delta;
                 pArr[idx + 1] += (ty - py) * 2.5 * delta;
                 pArr[idx + 2] += (tz - pz) * 2.5 * delta;
@@ -398,6 +446,7 @@
         renderer.render(scene, camera);
     }
     animate();
+    
     window.addEventListener('resize', () => {
         camera.aspect = window.innerWidth / window.innerHeight;
         camera.updateProjectionMatrix();
